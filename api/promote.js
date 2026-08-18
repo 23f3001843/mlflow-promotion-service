@@ -3,106 +3,153 @@
 const TS_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
 
-function isObject(x) {
-  return x !== null && typeof x === "object" && !Array.isArray(x);
-}
 
-function isTimestamp(x) {
-  if (typeof x !== "string" || !TS_RE.test(x)) return false;
-  return Number.isFinite(Date.parse(x));
-}
+// ============================================================
+// BASIC HELPERS
+// ============================================================
 
-function isFiniteNumber(x) {
-  return typeof x === "number" && Number.isFinite(x);
-}
-
-function isUnitNumber(x) {
-  return isFiniteNumber(x) && x >= 0 && x <= 1;
-}
-
-function isSafeNonNegativeInteger(x) {
+function isObject(value) {
   return (
-    typeof x === "number" &&
-    Number.isSafeInteger(x) &&
-    x >= 0
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
   );
 }
 
-function isCanonicalVersion(x) {
-  if (typeof x !== "string") return false;
-  if (!/^[1-9]\d*$/.test(x)) return false;
+function isValidTimestamp(value) {
+  if (typeof value !== "string") return false;
+  if (!TS_RE.test(value)) return false;
 
-  const n = Number(x);
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed);
+}
+
+function isFiniteNumber(value) {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value)
+  );
+}
+
+function isUnitNumber(value) {
+  return (
+    isFiniteNumber(value) &&
+    value >= 0 &&
+    value <= 1
+  );
+}
+
+function isSafeNonNegativeInteger(value) {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0
+  );
+}
+
+function isCanonicalVersion(value) {
+  if (typeof value !== "string") return false;
+
+  // Must be:
+  // "1"
+  // "2"
+  // "123"
+  //
+  // NOT:
+  // "01"
+  // "0"
+  // "-1"
+  // "1.0"
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    return false;
+  }
+
+  const numberValue = Number(value);
 
   return (
-    Number.isSafeInteger(n) &&
-    n > 0 &&
-    String(n) === x
+    Number.isSafeInteger(numberValue) &&
+    numberValue > 0 &&
+    String(numberValue) === value
   );
 }
 
 function byteCompare(a, b) {
   return Buffer.compare(
-    Buffer.from(a, "utf8"),
-    Buffer.from(b, "utf8")
+    Buffer.from(String(a), "utf8"),
+    Buffer.from(String(b), "utf8")
   );
 }
 
-function sortedUniqueCodes(codes) {
+function uniqueSortedCodes(codes) {
   return [...new Set(codes)].sort(byteCompare);
 }
 
 function addFailure(failedGates, version, code) {
-  if (!failedGates[version]) {
-    failedGates[version] = [];
+  const key = String(version);
+
+  if (!failedGates[key]) {
+    failedGates[key] = [];
   }
 
-  failedGates[version].push(code);
+  if (!failedGates[key].includes(code)) {
+    failedGates[key].push(code);
+  }
 }
 
-function cleanFailedGates(failedGates) {
+function finalizeFailedGates(failedGates) {
   const result = {};
 
-  for (const version of Object.keys(failedGates).sort(byteCompare)) {
-    result[version] = sortedUniqueCodes(
-      failedGates[version]
-    );
+  const versions = Object.keys(failedGates).sort(
+    byteCompare
+  );
+
+  for (const version of versions) {
+    result[version] =
+      uniqueSortedCodes(failedGates[version]);
   }
 
   return result;
 }
 
-function round12(x) {
-  return Math.round(x * 1e12) / 1e12;
+function round12(value) {
+  return Math.round(value * 1e12) / 1e12;
 }
 
 
-// ------------------------------------------------------------
-// Request-level validation
-// ------------------------------------------------------------
+// ============================================================
+// TOP LEVEL VALIDATION
+// ============================================================
 
-function validRequestShape(body) {
-  if (!isObject(body)) return false;
+function validateRequest(body) {
+  if (!isObject(body)) {
+    return false;
+  }
 
-  if (!isTimestamp(body.asOf)) return false;
+  if (!isValidTimestamp(body.asOf)) {
+    return false;
+  }
 
   if (!isCanonicalVersion(body.championVersion)) {
     return false;
   }
 
-  if (!isObject(body.policy)) return false;
+  if (!isObject(body.policy)) {
+    return false;
+  }
 
-  if (!Array.isArray(body.versions)) return false;
+  if (!Array.isArray(body.versions)) {
+    return false;
+  }
 
   return true;
 }
 
 
-// ------------------------------------------------------------
-// Policy validation
-// ------------------------------------------------------------
+// ============================================================
+// POLICY VALIDATION
+// ============================================================
 
-function validPolicy(policy) {
+function validatePolicy(policy) {
   if (
     typeof policy.datasetDigest !== "string" ||
     policy.datasetDigest.length === 0
@@ -117,7 +164,11 @@ function validPolicy(policy) {
     return false;
   }
 
-  if (!isSafeNonNegativeInteger(policy.maxAgeSeconds)) {
+  if (
+    !isSafeNonNegativeInteger(
+      policy.maxAgeSeconds
+    )
+  ) {
     return false;
   }
 
@@ -125,14 +176,20 @@ function validPolicy(policy) {
     return false;
   }
 
-  if (
-    !isObject(policy.requiredSlices)
-  ) {
+  if (!isObject(policy.requiredSlices)) {
     return false;
   }
 
-  for (const name of Object.keys(policy.requiredSlices)) {
-    if (!isUnitNumber(policy.requiredSlices[name])) {
+  for (
+    const name of Object.keys(
+      policy.requiredSlices
+    )
+  ) {
+    if (
+      !isUnitNumber(
+        policy.requiredSlices[name]
+      )
+    ) {
       return false;
     }
   }
@@ -144,7 +201,11 @@ function validPolicy(policy) {
     return false;
   }
 
-  if (!isSafeNonNegativeInteger(policy.maxSizeBytes)) {
+  if (
+    !isSafeNonNegativeInteger(
+      policy.maxSizeBytes
+    )
+  ) {
     return false;
   }
 
@@ -156,16 +217,15 @@ function validPolicy(policy) {
 }
 
 
-// ------------------------------------------------------------
-// Version validation
-// ------------------------------------------------------------
+// ============================================================
+// VERSION SHAPE
+// ============================================================
 
-function versionShapeErrors(version) {
+function validateVersionShape(version) {
   const errors = [];
 
   if (!isObject(version)) {
-    errors.push("INVALID_VERSION");
-    return errors;
+    return ["INVALID_VERSION"];
   }
 
   if (!isCanonicalVersion(version.version)) {
@@ -187,214 +247,292 @@ function versionShapeErrors(version) {
 }
 
 
-// ------------------------------------------------------------
-// Evaluation evidence
-// ------------------------------------------------------------
+// ============================================================
+// EVIDENCE CHECK
+// ============================================================
 
-function evaluateVersion(
+function checkEvidence(
   version,
   policy,
   asOfMs,
   failedGates
 ) {
-  const id = version.version;
-  const ev = version.evaluation;
+  const versionId = String(version.version);
+  const evaluation = version.evaluation;
 
-  if (!isObject(ev)) {
+  if (!isObject(evaluation)) {
     addFailure(
       failedGates,
-      id,
+      versionId,
       "MISSING_EVALUATION"
     );
+
     return false;
   }
 
   let eligible = true;
 
-  // createdAt
-  if (!isTimestamp(ev.createdAt)) {
+
+  // ----------------------------------------------------------
+  // Timestamp
+  // ----------------------------------------------------------
+
+  if (!isValidTimestamp(evaluation.createdAt)) {
     addFailure(
       failedGates,
-      id,
+      versionId,
       "INVALID_TIMESTAMP"
     );
+
     eligible = false;
   } else {
-    const createdMs = Date.parse(ev.createdAt);
+    const createdAtMs =
+      Date.parse(evaluation.createdAt);
 
-    if (createdMs > asOfMs) {
+    if (createdAtMs > asOfMs) {
       addFailure(
         failedGates,
-        id,
+        versionId,
         "FUTURE_EVALUATION"
       );
+
       eligible = false;
     }
 
-    const oldest =
+    const earliestAllowed =
       asOfMs -
       policy.maxAgeSeconds * 1000;
 
-    if (createdMs < oldest) {
+    if (createdAtMs < earliestAllowed) {
       addFailure(
         failedGates,
-        id,
+        versionId,
         "STALE_EVALUATION"
       );
+
       eligible = false;
     }
   }
 
+
+  // ----------------------------------------------------------
   // Numeric evidence
+  // ----------------------------------------------------------
+
   if (
-    !isFiniteNumber(ev.accuracy) ||
-    !isFiniteNumber(ev.latencyMs) ||
-    !isFiniteNumber(ev.sizeBytes)
+    !isFiniteNumber(evaluation.accuracy) ||
+    !isFiniteNumber(evaluation.latencyMs) ||
+    !isFiniteNumber(evaluation.sizeBytes)
   ) {
     addFailure(
       failedGates,
-      id,
+      versionId,
       "NON_FINITE"
     );
+
     eligible = false;
   }
 
+
+  // ----------------------------------------------------------
   // Accuracy range
+  // ----------------------------------------------------------
+
   if (
-    isFiniteNumber(ev.accuracy) &&
-    (ev.accuracy < 0 || ev.accuracy > 1)
+    isFiniteNumber(evaluation.accuracy) &&
+    (
+      evaluation.accuracy < 0 ||
+      evaluation.accuracy > 1
+    )
   ) {
     addFailure(
       failedGates,
-      id,
+      versionId,
       "METRIC_RANGE"
     );
+
     eligible = false;
   }
 
+
+  // ----------------------------------------------------------
   // Artifact lineage
-  if (ev.artifactDigest !== version.artifactDigest) {
+  // ----------------------------------------------------------
+
+  if (
+    evaluation.artifactDigest !==
+    version.artifactDigest
+  ) {
     addFailure(
       failedGates,
-      id,
+      versionId,
       "ARTIFACT_MISMATCH"
     );
+
     eligible = false;
   }
 
+
+  // ----------------------------------------------------------
   // Dataset lineage
-  if (ev.datasetDigest !== policy.datasetDigest) {
+  // ----------------------------------------------------------
+
+  if (
+    evaluation.datasetDigest !==
+    policy.datasetDigest
+  ) {
     addFailure(
       failedGates,
-      id,
+      versionId,
       "DATASET_MISMATCH"
     );
+
     eligible = false;
   }
 
+
+  // ----------------------------------------------------------
   // Schema lineage
-  if (ev.schemaDigest !== policy.schemaDigest) {
+  // ----------------------------------------------------------
+
+  if (
+    evaluation.schemaDigest !==
+    policy.schemaDigest
+  ) {
     addFailure(
       failedGates,
-      id,
+      versionId,
       "SCHEMA_MISMATCH"
     );
+
     eligible = false;
   }
 
-  // Accuracy gate
+
+  // ----------------------------------------------------------
+  // Accuracy floor
+  // ----------------------------------------------------------
+
   if (
-    !isFiniteNumber(ev.accuracy) ||
-    ev.accuracy < policy.accuracyFloor
+    !isFiniteNumber(evaluation.accuracy) ||
+    evaluation.accuracy <
+      policy.accuracyFloor
   ) {
     addFailure(
       failedGates,
-      id,
+      versionId,
       "ACCURACY_FLOOR"
     );
+
     eligible = false;
   }
 
-  // Latency gate
+
+  // ----------------------------------------------------------
+  // Latency limit
+  // ----------------------------------------------------------
+
   if (
-    !isFiniteNumber(ev.latencyMs) ||
-    ev.latencyMs < 0 ||
-    ev.latencyMs > policy.maxLatencyMs
+    !isFiniteNumber(evaluation.latencyMs) ||
+    evaluation.latencyMs < 0 ||
+    evaluation.latencyMs >
+      policy.maxLatencyMs
   ) {
     addFailure(
       failedGates,
-      id,
+      versionId,
       "LATENCY_LIMIT"
     );
+
     eligible = false;
   }
 
-  // Size gate
+
+  // ----------------------------------------------------------
+  // Size limit
+  // ----------------------------------------------------------
+
   if (
-    !isSafeNonNegativeInteger(ev.sizeBytes) ||
-    ev.sizeBytes > policy.maxSizeBytes
+    !isSafeNonNegativeInteger(
+      evaluation.sizeBytes
+    ) ||
+    evaluation.sizeBytes >
+      policy.maxSizeBytes
   ) {
     addFailure(
       failedGates,
-      id,
+      versionId,
       "SIZE_LIMIT"
     );
+
     eligible = false;
   }
 
-  // Slice gates
-  if (!isObject(ev.slices)) {
-    for (const name of Object.keys(
-      policy.requiredSlices
-    )) {
+
+  // ----------------------------------------------------------
+  // Required slices
+  // ----------------------------------------------------------
+
+  if (!isObject(evaluation.slices)) {
+    for (
+      const sliceName of Object.keys(
+        policy.requiredSlices
+      )
+    ) {
       addFailure(
         failedGates,
-        id,
-        `MISSING_SLICE:${name}`
+        versionId,
+        `MISSING_SLICE:${sliceName}`
       );
     }
 
     eligible = false;
   } else {
-    for (const name of Object.keys(
-      policy.requiredSlices
-    )) {
+    for (
+      const sliceName of Object.keys(
+        policy.requiredSlices
+      )
+    ) {
       if (
         !Object.prototype.hasOwnProperty.call(
-          ev.slices,
-          name
+          evaluation.slices,
+          sliceName
         )
       ) {
         addFailure(
           failedGates,
-          id,
-          `MISSING_SLICE:${name}`
+          versionId,
+          `MISSING_SLICE:${sliceName}`
         );
+
         eligible = false;
         continue;
       }
 
-      const value = ev.slices[name];
+      const sliceValue =
+        evaluation.slices[sliceName];
 
-      if (!isUnitNumber(value)) {
+      if (!isUnitNumber(sliceValue)) {
         addFailure(
           failedGates,
-          id,
-          `SLICE_RANGE:${name}`
+          versionId,
+          `SLICE_RANGE:${sliceName}`
         );
+
         eligible = false;
         continue;
       }
 
       if (
-        value <
-        policy.requiredSlices[name]
+        sliceValue <
+        policy.requiredSlices[sliceName]
       ) {
         addFailure(
           failedGates,
-          id,
-          `SLICE_FLOOR:${name}`
+          versionId,
+          `SLICE_FLOOR:${sliceName}`
         );
+
         eligible = false;
       }
     }
@@ -404,41 +542,66 @@ function evaluateVersion(
 }
 
 
-// ------------------------------------------------------------
-// Ranking
-// ------------------------------------------------------------
+// ============================================================
+// RANKING
+// ============================================================
 
-function compareVersions(a, b) {
-  const ae = a.evaluation;
-  const be = b.evaluation;
+function compareEligible(a, b) {
+  const aEval = a.evaluation;
+  const bEval = b.evaluation;
 
-  // Accuracy descending
-  if (ae.accuracy !== be.accuracy) {
-    return be.accuracy - ae.accuracy;
+  // 1. Accuracy descending
+  if (
+    aEval.accuracy !==
+    bEval.accuracy
+  ) {
+    return (
+      bEval.accuracy -
+      aEval.accuracy
+    );
   }
 
-  // Latency ascending
-  if (ae.latencyMs !== be.latencyMs) {
-    return ae.latencyMs - be.latencyMs;
+  // 2. Latency ascending
+  if (
+    aEval.latencyMs !==
+    bEval.latencyMs
+  ) {
+    return (
+      aEval.latencyMs -
+      bEval.latencyMs
+    );
   }
 
-  // Size ascending
-  if (ae.sizeBytes !== be.sizeBytes) {
-    return ae.sizeBytes - be.sizeBytes;
+  // 3. Size ascending
+  if (
+    aEval.sizeBytes !==
+    bEval.sizeBytes
+  ) {
+    return (
+      aEval.sizeBytes -
+      bEval.sizeBytes
+    );
   }
 
-  // Version ascending numerically
-  return Number(a.version) - Number(b.version);
+  // 4. Numeric version ascending
+  return (
+    Number(a.version) -
+    Number(b.version)
+  );
 }
 
 
-// ------------------------------------------------------------
-// Main logic
-// ------------------------------------------------------------
+// ============================================================
+// MAIN PROMOTION FUNCTION
+// ============================================================
 
-function promote(body) {
-  // Required HTTP 400 cases
-  if (!validRequestShape(body)) {
+function runPromotion(body) {
+
+  // ----------------------------------------------------------
+  // Required HTTP 400 validation
+  // ----------------------------------------------------------
+
+  if (!validateRequest(body)) {
     return {
       status: 400,
       body: {
@@ -447,7 +610,7 @@ function promote(body) {
     };
   }
 
-  if (!validPolicy(body.policy)) {
+  if (!validatePolicy(body.policy)) {
     return {
       status: 400,
       body: {
@@ -455,17 +618,22 @@ function promote(body) {
       }
     };
   }
+
 
   const failedGates = {};
 
+
   // ----------------------------------------------------------
-  // Check duplicates/noncanonical versions BEFORE lookup map
+  // IMPORTANT:
+  // Check duplicates BEFORE lookup map.
   // ----------------------------------------------------------
 
-  const seen = new Set();
+  const seenVersions = new Set();
+
   let contractFailure = false;
 
   for (const version of body.versions) {
+
     if (!isObject(version)) {
       contractFailure = true;
       continue;
@@ -475,16 +643,19 @@ function promote(body) {
 
     if (!isCanonicalVersion(id)) {
       contractFailure = true;
+
       addFailure(
         failedGates,
         String(id),
         "INVALID_VERSION"
       );
+
       continue;
     }
 
-    if (seen.has(id)) {
+    if (seenVersions.has(id)) {
       contractFailure = true;
+
       addFailure(
         failedGates,
         id,
@@ -492,56 +663,73 @@ function promote(body) {
       );
     }
 
-    seen.add(id);
+    seenVersions.add(id);
   }
+
+
+  // ----------------------------------------------------------
+  // Contract failure = block
+  // ----------------------------------------------------------
 
   if (contractFailure) {
     return {
       status: 200,
       body: {
         action: "block",
-        championVersion: body.championVersion,
+        championVersion:
+          body.championVersion,
         selectedVersion: null,
         eligibleVersions: [],
-        failedGates: cleanFailedGates(
-          failedGates
-        ),
+        failedGates:
+          finalizeFailedGates(
+            failedGates
+          ),
         aliasMutation: null,
         evidence: null
       }
     };
   }
 
+
   // ----------------------------------------------------------
-  // Build lookup map only after duplicate checks
+  // NOW build lookup map
   // ----------------------------------------------------------
 
-  const versionsById = new Map();
+  const versionMap = new Map();
 
   for (const version of body.versions) {
-    versionsById.set(
+    versionMap.set(
       version.version,
       version
     );
   }
 
-  const asOfMs = Date.parse(body.asOf);
+
+  // ----------------------------------------------------------
+  // Validate evidence
+  // ----------------------------------------------------------
 
   const eligible = [];
 
-  // ----------------------------------------------------------
-  // Check every version
-  // ----------------------------------------------------------
+  const asOfMs =
+    Date.parse(body.asOf);
 
   for (const version of body.versions) {
+
     const shapeErrors =
-      versionShapeErrors(version);
+      validateVersionShape(version);
 
     if (shapeErrors.length > 0) {
+
+      const id =
+        isObject(version)
+          ? String(version.version)
+          : "";
+
       for (const code of shapeErrors) {
         addFailure(
           failedGates,
-          version.version,
+          id,
           code
         );
       }
@@ -549,37 +737,49 @@ function promote(body) {
       continue;
     }
 
-    const ok = evaluateVersion(
-      version,
-      body.policy,
-      asOfMs,
-      failedGates
-    );
+    const isEligible =
+      checkEvidence(
+        version,
+        body.policy,
+        asOfMs,
+        failedGates
+      );
 
-    if (ok) {
+    if (isEligible) {
       eligible.push(version);
     }
   }
 
+
   // ----------------------------------------------------------
-  // Sort eligible versions
+  // Rank eligible models
   // ----------------------------------------------------------
 
-  eligible.sort(compareVersions);
+  eligible.sort(compareEligible);
 
   const eligibleVersions =
-    eligible.map((v) => v.version);
+    eligible.map(
+      (version) => version.version
+    );
+
 
   // ----------------------------------------------------------
-  // Champion must exist and have valid evidence
+  // Champion must exist
   // ----------------------------------------------------------
 
   const champion =
-    versionsById.get(
+    versionMap.get(
       body.championVersion
     );
 
   if (!champion) {
+
+    addFailure(
+      failedGates,
+      body.championVersion,
+      "INVALID_VERSION"
+    );
+
     return {
       status: 200,
       body: {
@@ -588,14 +788,20 @@ function promote(body) {
           body.championVersion,
         selectedVersion: null,
         eligibleVersions,
-        failedGates: cleanFailedGates(
-          failedGates
-        ),
+        failedGates:
+          finalizeFailedGates(
+            failedGates
+          ),
         aliasMutation: null,
         evidence: null
       }
     };
   }
+
+
+  // ----------------------------------------------------------
+  // Champion evidence must be valid
+  // ----------------------------------------------------------
 
   const championFailures =
     failedGates[
@@ -603,6 +809,7 @@ function promote(body) {
     ] || [];
 
   if (championFailures.length > 0) {
+
     return {
       status: 200,
       body: {
@@ -611,28 +818,32 @@ function promote(body) {
           body.championVersion,
         selectedVersion: null,
         eligibleVersions,
-        failedGates: cleanFailedGates(
-          failedGates
-        ),
+        failedGates:
+          finalizeFailedGates(
+            failedGates
+          ),
         aliasMutation: null,
         evidence: null
       }
     };
   }
 
+
   // ----------------------------------------------------------
-  // Best eligible challenger
+  // Find best challenger
   // ----------------------------------------------------------
 
   const challengers =
     eligible.filter(
-      (v) =>
-        v.version !==
+      (version) =>
+        version.version !==
         body.championVersion
     );
 
+
   // No challenger
   if (challengers.length === 0) {
+
     return {
       status: 200,
       body: {
@@ -642,9 +853,10 @@ function promote(body) {
         selectedVersion:
           body.championVersion,
         eligibleVersions,
-        failedGates: cleanFailedGates(
-          failedGates
-        ),
+        failedGates:
+          finalizeFailedGates(
+            failedGates
+          ),
         aliasMutation: null,
         evidence:
           champion.evaluation
@@ -652,22 +864,27 @@ function promote(body) {
     };
   }
 
+
   const challenger =
     challengers[0];
+
 
   // ----------------------------------------------------------
   // Improvement
   // ----------------------------------------------------------
 
-  const improvement = round12(
-    challenger.evaluation.accuracy -
+  const improvement =
+    round12(
+      challenger.evaluation.accuracy -
       champion.evaluation.accuracy
-  );
+    );
+
 
   if (
     improvement <
     body.policy.minImprovement
   ) {
+
     return {
       status: 200,
       body: {
@@ -677,9 +894,10 @@ function promote(body) {
         selectedVersion:
           body.championVersion,
         eligibleVersions,
-        failedGates: cleanFailedGates(
-          failedGates
-        ),
+        failedGates:
+          finalizeFailedGates(
+            failedGates
+          ),
         aliasMutation: null,
         evidence:
           champion.evaluation
@@ -687,8 +905,9 @@ function promote(body) {
     };
   }
 
+
   // ----------------------------------------------------------
-  // Promote
+  // PROMOTE
   // ----------------------------------------------------------
 
   return {
@@ -700,12 +919,14 @@ function promote(body) {
       selectedVersion:
         challenger.version,
       eligibleVersions,
-      failedGates: cleanFailedGates(
-        failedGates
-      ),
+      failedGates:
+        finalizeFailedGates(
+          failedGates
+        ),
       aliasMutation: {
         alias: "champion",
-        version: challenger.version
+        version:
+          challenger.version
       },
       evidence:
         challenger.evaluation
@@ -714,16 +935,22 @@ function promote(body) {
 }
 
 
-// ------------------------------------------------------------
-// Vercel handler
-// ------------------------------------------------------------
+// ============================================================
+// VERCEL HANDLER
+// ============================================================
 
-module.exports = async (req, res) => {
+module.exports = async function handler(
+  req,
+  res
+) {
+
   res.setHeader(
     "Content-Type",
     "application/json"
   );
 
+
+  // Only POST
   if (req.method !== "POST") {
     res.status(400).json({
       error: "INVALID_INPUT"
@@ -731,23 +958,60 @@ module.exports = async (req, res) => {
     return;
   }
 
-  let body = req.body;
 
-  // Handle environments where body arrives as text.
-  if (typeof body === "string") {
-    try {
-      body = JSON.parse(body);
-    } catch (e) {
-      res.status(400).json({
-        error: "INVALID_INPUT"
-      });
-      return;
+  try {
+
+    let body = req.body;
+
+
+    // --------------------------------------------------------
+    // Vercel normally parses JSON.
+    // But handle a raw string too.
+    // --------------------------------------------------------
+
+    if (typeof body === "string") {
+
+      try {
+        body = JSON.parse(body);
+      } catch (parseError) {
+        res.status(400).json({
+          error: "INVALID_INPUT"
+        });
+        return;
+      }
     }
+
+
+    // --------------------------------------------------------
+    // Run the actual gate
+    // --------------------------------------------------------
+
+    const result =
+      runPromotion(body);
+
+
+    res
+      .status(result.status)
+      .json(result.body);
+
+  } catch (error) {
+
+    // IMPORTANT:
+    // Don't let an unexpected JavaScript exception
+    // escape the Vercel function.
+    //
+    // Log it so we can diagnose it from Vercel logs.
+
+    console.error(
+      "PROMOTE_ERROR",
+      error &&
+        error.stack
+        ? error.stack
+        : error
+    );
+
+    res.status(500).json({
+      error: "INTERNAL_ERROR"
+    });
   }
-
-  const result = promote(body);
-
-  res
-    .status(result.status)
-    .json(result.body);
 };
